@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CV ile İş Eşleştirici</title>
+    <style>
+        body { font-family: Arial; max-width: 1200px; margin: auto; padding: 20px; }
+        .job-card { border: 1px solid #ddd; margin: 10px; padding: 15px; border-radius: 8px; }
+        .score { font-weight: bold; color: green; }
+        .cv-info { background: #f0f0f0; padding: 10px; border-radius: 8px; margin-bottom: 20px; }
+        button { background: #007bff; color: white; padding: 10px 20px; border: none; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>CV ile İş Eşleştirici (Türkiye)</h1>
+    <form action="/match" method="post" enctype="multipart/form-data">
+        <label>CV'nizi yükleyin (PDF/DOCX):</label>
+        <input type="file" name="cv_file" required>
+        <button type="submit">Eşleştir</button>
+    </form>
+
+    {% if cv_data %}
+    <div class="cv-info">
+        <h3>CV'den Çıkarılan Bilgiler</h3>
+        <p><strong>Yetenekler:</strong> {{ cv_data.skills | join(', ') }}</p>
+        <p><strong>Tecrübe (yıl):</strong> {{ cv_data.experience_years }}</p>
+        <p><strong>Eğitim:</strong> {{ cv_data.education }}</p>
+    </div>
+    {% endif %}
+
+    {% if jobs %}
+    <h2>Eşleşen İş İlanları (Skora Göre Sıralı)</h2>
+    {% for job in jobs %}
+    <div class="job-card">
+        <h3>{{ job.title }}</h3>
+        <p><strong>Şirket:</strong> {{ job.company }}</p>
+        <p><strong>Kaynak:</strong> {{ job.source }}</p>
+        <p><strong>Eşleşme Skoru:</strong> <span class="score">{{ job.match_score }}%</span></p>
+        <a href="{{ job.link }}" target="_blank">İlana Git & Başvur</a>
+    </div>
+    {% endfor %}
+    {% endif %}
+</body>
+</html>
