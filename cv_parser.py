@@ -1,11 +1,16 @@
-import re
-from PyPDF2 import PdfReader
+import streamlit as st
+import requests
+from bs4 import BeautifulSoup
+import PyPDF2
 from docx import Document
+import re
+from io import BytesIO
 
+# ---------- CV PARSING ----------
 def extract_text_from_pdf(file):
-    reader = PdfReader(file)
+    pdf_reader = PyPDF2.PdfReader(file)
     text = ""
-    for page in reader.pages:
+    for page in pdf_reader.pages:
         text += page.extract_text()
     return text
 
@@ -15,7 +20,6 @@ def extract_text_from_docx(file):
     return text
 
 def extract_skills(text):
-    # Basit bir yetenek listesi (genişletilebilir)
     skill_keywords = [
         "python", "java", "javascript", "react", "angular", "vue", "node.js", "django", "flask",
         "sql", "postgresql", "mysql", "mongodb", "docker", "kubernetes", "aws", "azure", "git",
@@ -29,7 +33,6 @@ def extract_skills(text):
     return found
 
 def extract_experience_years(text):
-    # Örnek: "5 yıl", "3 years" gibi kalıpları bul
     patterns = [r'(\d+)\s*yıl', r'(\d+)\s*years', r'(\d+)\s+year']
     for pattern in patterns:
         match = re.search(pattern, text.lower())
@@ -44,18 +47,117 @@ def extract_education(text):
             return keyword.title()
     return "Belirtilmemiş"
 
-def parse_cv(file):
-    filename = file.filename
-    if filename.endswith('.pdf'):
-        text = extract_text_from_pdf(file.file)
-    elif filename.endswith('.docx'):
-        text = extract_text_from_docx(file.file)
+def parse_cv(uploaded_file):
+    if uploaded_file.name.endswith('.pdf'):
+        text = extract_text_from_pdf(uploaded_file)
+    elif uploaded_file.name.endswith('.docx'):
+        text = extract_text_from_docx(uploaded_file)
     else:
-        raise ValueError("Desteklenen format: PDF veya DOCX")
-    
+        st.error("Desteklenen format: PDF veya DOCX")
+        return None
     return {
         "skills": extract_skills(text),
         "experience_years": extract_experience_years(text),
         "education": extract_education(text),
-        "full_text": text[:1000]  # İstatistik için
+        "full_text": text[:1000]
     }
+
+# ---------- JOB SCRAPING (demo) ----------
+def search_kariyer_net(keywords):
+    base_url = "https://www.kariyer.net/is-ilanlari"
+    params = {"keywords": keywords, "location": "Türkiye"}
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        response = requests.get(base_url, params=params, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        jobs = []
+        for item in soup.select(".ilan-card")[:5]:
+            title_elem = item.select_one(".pozisyon")
+            company_elem = item.select_one(".firma")
+            link_elem = item.select_one("a")
+            if title_elem and link_elem:
+                title = title_elem.text.strip()
+                company = company_elem.text.strip() if company_elem else ""
+                link = "https://www.kariyer.net" + link_elem.get("href")
+                jobs.append({"title": title, "company": company, "link": link, "source": "Kariyer.net"})
+        return jobs
+    except:
+        return []
+
+def search_indeed_tr(keywords):
+    base_url = "https://tr.indeed.com/iş"
+    params = {"q": keywords, "l": "Türkiye"}
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        response = requests.get(base_url, params=params, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        jobs = []
+        for card in soup.select(".job_seen_beacon")[:5]:
+            title_elem = card.select_one("h2 a")
+            company_elem = card.select_one(".companyName")
+            link_elem = card.select_one("a")
+            if title_elem and link_elem:
+                title = title_elem.text.strip()
+                company = company_elem.text.strip() if company_elem else ""
+                link = "https://tr.indeed.com" + link_elem.get("href")
+                jobs.append({"title": title, "company": company, "link": link, "source": "Indeed"})
+        return jobs
+    except:
+        return []
+
+def fetch_jobs(skills):
+    keyword = " ".join(skills[:3]) if skills else "yazılım"
+    jobs = search_kariyer_net(keyword) + search_indeed_tr(keyword)
+    return jobs
+
+# ---------- MATCHING ----------
+def calculate_match_score(cv_data, job):
+    score = 0
+    cv_skills = set(cv_data["skills"])
+    job_text = (job["title"] + " " + job["company"]).lower()
+    for skill in cv_skills:
+        if skill in job_text:
+            score += 10
+    if cv_data["experience_years"] >= 3:
+        score += 20
+    elif cv_data["experience_years"] >= 1:
+        score += 10
+    if cv_data["education"] in ["Lisans", "Yüksek Lisans", "Master"]:
+        score += 15
+    return min(score, 100)
+
+# ---------- STREAMLIT UI ----------
+st.set_page_config(page_title="CV ile İş Eşleştirici", layout="wide")
+st.title("📄 CV ile İş Eşleştirici (Türkiye)")
+st.markdown("CV'nizi yükleyin, size uygun iş ilanlarını bulalım.")
+
+uploaded_file = st.file_uploader("CV'nizi seçin (PDF veya DOCX)", type=["pdf", "docx"])
+
+if uploaded_file is not None:
+    with st.spinner("CV işleniyor..."):
+        cv_data = parse_cv(uploaded_file)
+    
+    if cv_data:
+        st.subheader("📊 CV'den Çıkarılan Bilgiler")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Yetenekler", ", ".join(cv_data["skills"][:5]) if cv_data["skills"] else "Bulunamadı")
+        col2.metric("Tecrübe (yıl)", cv_data["experience_years"])
+        col3.metric("Eğitim", cv_data["education"])
+        
+        with st.spinner("İlanlar taranıyor (bu 10-20 saniye sürebilir)..."):
+            jobs = fetch_jobs(cv_data["skills"])
+        
+        if jobs:
+            for job in jobs:
+                job["match_score"] = calculate_match_score(cv_data, job)
+            jobs.sort(key=lambda x: x["match_score"], reverse=True)
+            
+            st.subheader("🎯 Eşleşen İş İlanları")
+            for job in jobs:
+                with st.expander(f"{job['title']} - {job['company']} (Skor: {job['match_score']}%)"):
+                    st.write(f"**Kaynak:** {job['source']}")
+                    st.write(f"**Pozisyon:** {job['title']}")
+                    st.write(f"**Şirket:** {job['company']}")
+                    st.markdown(f"[İlana Git ve Başvur]({job['link']})", unsafe_allow_html=True)
+        else:
+            st.warning("Hiç ilan bulunamadı. Lütfen daha sonra tekrar deneyin.")
